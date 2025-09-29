@@ -51,15 +51,22 @@ zypper -n install iperf telnet sysstat bind-utils unzip insserv-compat policycor
 
 if ((ENABLE_UI)); then
     # apache
-    zypper -n install apache2
+    zypper -n install apache2 apache2-mod_security2
     echo '==1=='
-    # configure proxy and auth
+    # configure Apache2 modules
     a2enmod headers
     a2enmod rewrite
     a2enmod http
     a2enmod proxy
     a2enmod proxy_http
     a2enmod ssl
+    a2enmod mod_request
+    a2enmod auth_form
+    a2enmod session
+    a2enmod session_cookie
+    a2enmod session_crypto
+    a2enmod security2
+    a2enmod unique_id
 
     #Enable SSL
     if [ ! -f /etc/apache2/ssl.key/ecs-sync.key ]; then
@@ -69,14 +76,24 @@ if ((ENABLE_UI)); then
     a2enflag SSL
 
     echo '==2=='
-    SRV_ROOT=`apache2ctl -S 2>&1|grep ServerRoot |awk '{print $2}'`
-    cp "${DIST_DIR}/ova/httpd/.htpasswd" /etc/apache2/
+    cp "${DIST_DIR}/ova/httpd/.htpasswd" /etc/apache2
     cp "${DIST_DIR}/ova/apache2/conf.d/ecs-sync.conf" /etc/apache2/conf.d
+    cp "${DIST_DIR}/ova/mod_security.d/failed_login_block.conf" /etc/apache2/mod_security2.d
+    cp "${DIST_DIR}/ova/mod_security.d/zz-apache_override.conf" /etc/apache2/conf.d
+
+    DOCUMENT_ROOT=`grep -Ri 'DocumentRoot ' /etc/apache2/*.conf | awk '{print $2}' | sed 's/"//g' | head -n 1`
+    if [ -d "$DOCUMENT_ROOT" ]; then
+        echo "DOCUMENT_ROOT=${DOCUMENT_ROOT}"
+        cp -r "${DIST_DIR}/ova/html/." "${DOCUMENT_ROOT}/"
+    else
+        echo "DocumentRoot does NOT exist."
+    fi
+
     if [ -x "/usr/bin/systemctl" ]; then
         systemctl enable apache2
-	echo '==3=='
+        echo '==3=='
         systemctl restart apache2
-	echo '==4=='
+        echo '==4=='
     else
         chkconfig apache2 reset
         service apache2 restart

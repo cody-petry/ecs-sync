@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Session Expired - ECS Sync UI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            background-color: #f5f5f5;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            margin: 0;
+        }
+
+        .error-box {
+            width: 360px;
+            margin: 100px auto;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .error-header {
+            background-color: #f8f8f8;
+            padding: 15px;
+            border-bottom: 1px solid #e7e7e7;
+            text-align: center;
+        }
+
+        .error-header h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: bold;
+            color: #777;
+        }
+
+        .error-body {
+            padding: 20px;
+            text-align: center;
+            color: #333;
+        }
+
+        .error-body p {
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+
+        .error-body a {
+            color: #337ab7;
+            text-decoration: none;
+        }
+
+        .error-body a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+<div class="error-box">
+    <div class="error-header">
+        <h3>401 Unauthorized</h3>
+    </div>
+    <div class="error-body">
+        <p>Your login has been blocked due to multiple failed login attempts.</p>
+        <p>Please retry by  <a href="/login/index.html">clicking here</a> after 5 minutes.</p>
+    </div>
+</div>
+
+</body>
+</html>

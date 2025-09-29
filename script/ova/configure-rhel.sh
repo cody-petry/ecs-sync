@@ -58,10 +58,26 @@ yum -y install iperf telnet sysstat bind-utils unzip
 
 if ((ENABLE_UI)); then
     # apache
-    yum -y install httpd mod_ssl
+    yum -y install httpd mod_ssl mod_security mod_session mod_proxy_html
+
+    if [ ! -f /etc/pki/tls/private/ecs-sync.key ]; then
+        echo "WARNING: /etc/pki/tls/private/ecs-sync.key does not exist. Generating self-signed certificate."
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/pki/tls/private/ecs-sync.key -out /etc/pki/tls/certs/ecs-sync.crt
+    fi
+
     # configure proxy and auth
     cp "${DIST_DIR}/ova/httpd/.htpasswd" /etc/httpd
     cp "${DIST_DIR}/ova/httpd/conf.d/ecs-sync.conf" /etc/httpd/conf.d
+    cp "${DIST_DIR}/ova/mod_security.d/failed_login_block.conf" /etc/httpd/modsecurity.d
+    cp "${DIST_DIR}/ova/mod_security.d/zz-apache_override.conf" /etc/httpd/conf.d
+
+    DOCUMENT_ROOT=`grep -Ri 'DocumentRoot ' /etc/httpd/conf | awk '{print $2}' | sed 's/"//g' | head -n 1`
+    if [ -d "$DOCUMENT_ROOT" ]; then
+        echo "DOCUMENT_ROOT=${DOCUMENT_ROOT}"
+        cp -r "${DIST_DIR}/ova/html/." "${DOCUMENT_ROOT}/"
+    else
+        echo "DocumentRoot does NOT exist."
+    fi
     if [ -x "/usr/bin/systemctl" ]; then
         systemctl enable httpd
         systemctl restart httpd

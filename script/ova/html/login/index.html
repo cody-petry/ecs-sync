@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ECS Sync UI Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            background-color: #f5f5f5;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            margin: 0;
+        }
+
+        .login-box {
+            width: 400px;
+            margin: 100px auto;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .login-header {
+            background-color: #f8f8f8;
+            padding: 15px;
+            border-bottom: 1px solid #e7e7e7;
+        }
+
+        .login-header h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: bold;
+            color: #777;
+            text-align: center;
+        }
+
+        .login-body {
+            padding: 20px;
+        }
+
+        .login-body label {
+            display: block;
+            margin-bottom: 12px;
+            font-weight: 500;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .login-body input[type="text"],
+        .login-body input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            margin-top: 4px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .login-body input[type="submit"] {
+            width: 100%;
+            padding: 10px;
+            margin-top: 16px;
+            background-color: #337ab7;
+            color: white;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .login-body input[type="submit"]:hover {
+            background-color: #286090;
+        }
+
+        .error-message {
+            display: none;
+            margin-bottom: 16px;
+            padding: 10px;
+            background-color: #f2dede;
+            color: #a94442;
+            border: 1px solid #ebccd1;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-box">
+    <div class="login-header">
+        <h3>ECS Sync UI Login</h3>
+    </div>
+    <div class="login-body">
+        <div id="error-message" style="display:none; color:red;">
+            Invalid username or password. Please try again.
+        </div>
+        <form method="POST" action="/" onsubmit="sessionStorage.setItem('login-attempted', 'true')">
+            <label>Username:
+                <input type="text" name="httpd_username" required>
+            </label>
+            <label>Password:
+                <input type="password" name="httpd_password" required>
+            </label>
+            <input type="submit" value="Login">
+        </form>
+    </div>
+</div>
+
+<script>
+    window.onload = function() {
+        if (sessionStorage.getItem('login-attempted')) {
+            document.getElementById('error-message').style.display = 'block';
+            sessionStorage.removeItem('login-attempted'); // Clear after showing
+        }
+    };
+</script>
+
+</body>
+</html>
