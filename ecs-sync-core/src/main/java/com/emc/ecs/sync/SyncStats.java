@@ -12,12 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync;
 
 import com.emc.ecs.sync.model.FailedObject;
 import com.emc.ecs.sync.util.PerformanceWindow;
 import com.sun.management.OperatingSystemMXBean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.management.ManagementFactory;
 import java.text.MessageFormat;
@@ -25,9 +27,12 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 public class SyncStats implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(SyncStats.class);
+
     // objectsComplete + objectsSkipped + objectsFailed = (total objects)
     // Counted if any phase of the sync has been completed and the object sync is successful.
     private long objectsComplete;
@@ -40,6 +45,10 @@ public class SyncStats implements AutoCloseable {
     private long objectsCopySkipped;
     private long bytesCopySkipped;
     private SortedSet<FailedObject> failedObjects = Collections.synchronizedSortedSet(new TreeSet<>());
+    // Objects submitted to the sync pool that have not yet reached a terminal state (success, skip or error).
+    // Unlike the executor task counters, this survives the hand-off between a failed attempt and its re-queued retry,
+    // so job completion can be decided on it without a race (see EcsSync.run()).
+    private final AtomicLong objectsInFlight = new AtomicLong();
     private final PerformanceWindow objectCompleteRate = new PerformanceWindow(500, 20);
     private final PerformanceWindow objectSkipRate = new PerformanceWindow(500, 20);
     private final PerformanceWindow objectErrorRate = new PerformanceWindow(500, 20);
@@ -55,6 +64,24 @@ public class SyncStats implements AutoCloseable {
         objectsComplete = objectsSkipped = objectsFailed = objectsCopySkipped = 0;
         bytesComplete = bytesSkipped = bytesCopySkipped = 0;
         failedObjects = Collections.synchronizedSortedSet(new TreeSet<>());
+    }
+
+    public void incObjectsInFlight() {
+        objectsInFlight.incrementAndGet();
+    }
+
+    /**
+     * Marks an object as having left the pipeline (success, skip or error). The counter never goes below zero: a
+     * decrement without a matching increment (e.g. a SyncTask constructed and run outside EcsSync) is logged at DEBUG
+     * and ignored, so that it can never offset a genuine in-flight object and cause a premature completion.
+     */
+    public void decObjectsInFlight() {
+        long before = objectsInFlight.getAndUpdate(v -> v > 0 ? v - 1 : 0);
+        if (before <= 0) log.debug("objectsInFlight decremented without a matching increment; keeping 0");
+    }
+
+    public long getObjectsInFlight() {
+        return objectsInFlight.get();
     }
 
     public synchronized void incObjectsComplete() {

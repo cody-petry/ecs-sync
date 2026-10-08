@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync.storage.s3;
 
 import com.emc.ecs.sync.NonRetriableException;
@@ -379,9 +379,8 @@ public class EcsS3Storage extends AbstractS3Storage<EcsS3Config> implements Opti
             versions.add(version);
         }
 
-        versions.sort(new S3VersionComparator());
-
-        return versions;
+        // keep the storage's own sequence (listing order, newest first) instead of re-sorting by timestamp
+        return orderVersionChain(versions);
     }
 
     public LargeFileMultipartSource getMultipartSource(String key, String versionId, ObjectMetadata metadata) {
@@ -1140,8 +1139,20 @@ public class EcsS3Storage extends AbstractS3Storage<EcsS3Config> implements Opti
 
         @Override
         protected ObjectSummary getNextObject() {
-            if (listing == null || (!objectIterator.hasNext() && listing.isTruncated())) {
+            // a page can be truncated and still be empty; keep fetching until an object is found or the listing ends
+            // (previously a single empty truncated page ended the enumeration silently); a truncated empty page whose
+            // marker did not move is a storage fault that would loop forever, so it is reported instead
+            while (listing == null || (!objectIterator.hasNext() && listing.isTruncated())) {
+                ListObjectsResult previous = listing;
                 getNextBatch();
+                // no continuation marker (re-requesting with a null marker would start over) or an unchanged marker
+                if (!objectIterator.hasNext() && listing.isTruncated()
+                        && (listing.getNextMarker() == null
+                        || (previous != null && Objects.equals(previous.getNextMarker(), listing.getNextMarker())))) {
+                    throw new RuntimeException(String.format("object listing of bucket %s (prefix %s) is not making progress: "
+                                    + "empty truncated page with %s marker (%s)", config.getBucketName(), prefix,
+                            listing.getNextMarker() == null ? "no continuation" : "unchanged", listing.getNextMarker()));
+                }
             }
 
             if (objectIterator.hasNext()) {
@@ -1193,8 +1204,23 @@ public class EcsS3Storage extends AbstractS3Storage<EcsS3Config> implements Opti
 
         private AbstractVersion getNextVersion() {
             // look for deleted objects in versioned bucket
-            if (versionListing == null || (!versionIterator.hasNext() && versionListing.isTruncated())) {
+            // a page can be truncated and still be empty; keep fetching until a version is found or the listing ends
+            // (previously a single empty truncated page ended the enumeration silently, skipping the remaining
+            // deleted keys); a truncated empty page whose markers did not move is reported instead of looping
+            while (versionListing == null || (!versionIterator.hasNext() && versionListing.isTruncated())) {
+                ListVersionsResult previous = versionListing;
                 getNextVersionBatch();
+                // no continuation marker (re-requesting with null markers would start over) or unchanged markers
+                if (!versionIterator.hasNext() && versionListing.isTruncated()
+                        && (versionListing.getNextKeyMarker() == null
+                        || (previous != null
+                        && Objects.equals(previous.getNextKeyMarker(), versionListing.getNextKeyMarker())
+                        && Objects.equals(previous.getNextVersionIdMarker(), versionListing.getNextVersionIdMarker())))) {
+                    throw new RuntimeException(String.format("version listing of bucket %s (prefix %s) is not making progress: "
+                                    + "empty truncated page with %s markers (key-marker=%s, version-id-marker=%s)",
+                            config.getBucketName(), prefix, versionListing.getNextKeyMarker() == null ? "no continuation" : "unchanged",
+                            versionListing.getNextKeyMarker(), versionListing.getNextVersionIdMarker()));
+                }
             }
 
             if (versionIterator.hasNext()) {

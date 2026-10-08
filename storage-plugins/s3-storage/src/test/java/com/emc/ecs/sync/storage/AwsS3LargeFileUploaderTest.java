@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync.storage;
 
 import com.amazonaws.ClientConfiguration;
@@ -80,6 +80,8 @@ public class AwsS3LargeFileUploaderTest {
 
     @AfterAll
     public void teardown() {
+        // setup() aborts via an Assumption when no S3 endpoint is configured; there is then nothing to clean up
+        if (s3 == null) return;
         MultipartUploadListing multipartUploadListing = s3.listMultipartUploads(new ListMultipartUploadsRequest(bucket));
         for (MultipartUpload multipartUpload : multipartUploadListing.getMultipartUploads()) {
             s3.abortMultipartUpload(new AbortMultipartUploadRequest(bucket, multipartUpload.getKey(), multipartUpload.getUploadId()));

@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync.storage.s3;
 
 import com.amazonaws.SdkClientException;
@@ -110,8 +110,14 @@ public abstract class AbstractS3Storage<C> extends AbstractStorage<C> {
         if (includeVersions) {
             List<S3ObjectVersion> objectVersions = loadVersions(identifier);
             if (!objectVersions.isEmpty()) {
-                // use latest version as object
+                // use latest version as object (S3VersionComparator sorts the IsLatest version last)
                 S3ObjectVersion object = objectVersions.get(objectVersions.size() - 1);
+                if (!object.isLatest()) {
+                    // no version is flagged IsLatest: the listing is inconsistent and the version chain cannot be
+                    // replayed safely (putIntermediateVersions() would upload every version, then the current-version
+                    // put would re-read an already consumed stream), so fail the object with a clear reason
+                    throw new RuntimeException("no version of " + identifier + " is flagged as latest; cannot determine current version");
+                }
 
                 object.setProperty(PROP_OBJECT_VERSIONS, objectVersions);
 
@@ -121,6 +127,52 @@ public abstract class AbstractS3Storage<C> extends AbstractStorage<C> {
         } else {
             return loadObject(identifier, null);
         }
+    }
+
+    /**
+     * Orders a version chain for comparison, replay and verification: oldest first, current (IsLatest) version last.
+     * <p>
+     * ListObjectVersions returns the versions of a key in the order the storage keeps them, most recent first (AWS S3
+     * API reference, "Versions" element; RGW and ECS behave the same way), so the chain order is simply the reverse
+     * of the listing order. The previous implementation re-sorted by LastModified with the opaque version-id string
+     * as tie-breaker. That is not the storage's sequence: listing timestamps have one-second granularity on most
+     * dialects, the target receives its historical versions back-to-back during a replay (so they tie), and clocks
+     * can differ between storage nodes. A disagreement between listing order and timestamp order is logged for
+     * diagnosis but no longer applied.
+     * <p>
+     * DRAFT (review proposal 0005): validate against each storage dialect in use before adoption - the listing
+     * order assumption must hold for both the source and the target.
+     *
+     * @param listed the versions of one key in listing order (newest first); re-ordered in place
+     * @return the same list, oldest first, current version last
+     */
+    List<S3ObjectVersion> orderVersionChain(List<S3ObjectVersion> listed) {
+        Collections.reverse(listed);
+
+        // the current version must be last; if the listing did not return it first, the listing is inconsistent -
+        // move it, log it, and let loadObject()'s IsLatest guard decide whether the chain is usable
+        for (int i = 0; i < listed.size() - 1; i++) {
+            if (listed.get(i).isLatest()) {
+                log.warn("[{}]: IsLatest version {} was not the first entry of the version listing; moving it to the end of the chain",
+                        listed.get(i).getRelativePath(), listed.get(i).getVersionId());
+                listed.add(listed.remove(i));
+                break;
+            }
+        }
+
+        // diagnostic only: report chains whose storage order disagrees with their LastModified order
+        if (log.isDebugEnabled()) {
+            S3VersionComparator byTime = new S3VersionComparator();
+            for (int i = 1; i < listed.size(); i++) {
+                if (byTime.compare(listed.get(i - 1), listed.get(i)) > 0) {
+                    log.debug("[{}]: listing order differs from LastModified order at version {} (mtime {}) after {} (mtime {}); keeping listing order",
+                            listed.get(i).getRelativePath(), listed.get(i).getVersionId(), listed.get(i).getMetadata().getModificationTime(),
+                            listed.get(i - 1).getVersionId(), listed.get(i - 1).getMetadata().getModificationTime());
+                    break;
+                }
+            }
+        }
+        return listed;
     }
 
     boolean isDirectoryPlaceholder(String contentType, long size) {

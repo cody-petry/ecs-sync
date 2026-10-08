@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync.storage.s3;
 
 import com.amazonaws.ClientConfiguration;
@@ -65,6 +65,8 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
 
     private static final int MAX_PUT_SIZE_MB = 5 * 1024; // 5GB
     private static final int MIN_PART_SIZE_MB = 5;
+    // S3 (and RGW: rgw_delete_multi_obj_max_num) reject a multi-object delete with more than 1000 keys (MalformedXML/400)
+    private static final int MAX_DELETION_SUPPORTED = 1000;
     public static final long MAX_OBJECT_SIZE = 5L * 1024 * 1024 * 1024 * 1024; // 5TB
 
     // timed operations
@@ -364,9 +366,8 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
             versions.add(version);
         }
 
-        versions.sort(new S3VersionComparator());
-
-        return versions;
+        // keep the storage's own sequence (listing order, newest first) instead of re-sorting by timestamp
+        return orderVersionChain(versions);
     }
 
     @Override
@@ -445,13 +446,17 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
                         deleteVersions.add(new DeleteObjectsRequest.KeyVersion(identifier, version.getVersionId()));
                     }
 
-                    // batch delete all versions in target
-                    log.debug("[{}]: deleting all versions in target", object.getRelativePath());
-                    if (!deleteVersions.isEmpty()) {
+                    // batch delete all versions in target (at most MAX_DELETION_SUPPORTED keys per request, like EcsS3Storage)
+                    log.debug("[{}]: deleting all {} versions in target", object.getRelativePath(), deleteVersions.size());
+                    int batchStartIndex = 0;
+                    while (batchStartIndex < deleteVersions.size()) {
+                        int batchEndIndex = Math.min(batchStartIndex + MAX_DELETION_SUPPORTED, deleteVersions.size());
+                        final List<DeleteObjectsRequest.KeyVersion> batchDeleteVersions = deleteVersions.subList(batchStartIndex, batchEndIndex);
                         operationWrapper((Function<Void>) () -> {
-                            s3.deleteObjects(new DeleteObjectsRequest(config.getBucketName()).withKeys(deleteVersions));
+                            s3.deleteObjects(new DeleteObjectsRequest(config.getBucketName()).withKeys(batchDeleteVersions));
                             return null;
                         }, OPERATION_DELETE_VERSIONS, object, identifier);
+                        batchStartIndex = batchEndIndex;
                     }
 
                     // replay version history in target
@@ -862,6 +867,22 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
         return s3Perm;
     }
 
+    /**
+     * Returns true (and logs) if the key matches one of the configured excludedKeys patterns. Shared by the
+     * current-object and the deleted-object enumerations so that the option applies to every key the plugin lists.
+     */
+    private boolean isExcludedKey(String key) {
+        if (excludedKeyPatterns != null) {
+            for (Pattern p : excludedKeyPatterns) {
+                if (p.matcher(key).matches()) {
+                    log.info("excluding file {}: matches pattern: {}", key, p);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private class PrefixIterator extends ReadOnlyIterator<ObjectSummary> {
         private final String prefix;
         private ObjectListing listing;
@@ -875,8 +896,23 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
         protected ObjectSummary getNextObject() {
             nextObjectLoop:
             while (true) {
-                if (listing == null || (!objectIterator.hasNext() && listing.isTruncated())) {
+                // NOTE: a page can be truncated and still contain no summaries (e.g. when the storage's per-request scan
+                // budget is exhausted by filtered entries); keep fetching until a summary is found or the listing ends,
+                // otherwise the remaining live objects would be silently skipped (a single 'if' here ended the
+                // enumeration at the first empty truncated page). A truncated empty page whose marker did not move, or
+                // that carries no continuation marker at all (the SDK leaves NextMarker null when the service omits it
+                // and the page has no key to fall back to; re-requesting with a null marker starts over), can never be
+                // followed, so it is reported instead of looping forever.
+                while (listing == null || (!objectIterator.hasNext() && listing.isTruncated())) {
+                    ObjectListing previous = listing;
                     getNextBatch();
+                    if (!objectIterator.hasNext() && listing.isTruncated()
+                            && (listing.getNextMarker() == null
+                            || (previous != null && Objects.equals(previous.getNextMarker(), listing.getNextMarker())))) {
+                        throw new RuntimeException(String.format("object listing of bucket %s (prefix %s) is not making progress: "
+                                        + "empty truncated page with %s marker (%s)", config.getBucketName(), prefix,
+                                listing.getNextMarker() == null ? "no continuation" : "unchanged", listing.getNextMarker()));
+                    }
                 }
 
                 if (objectIterator.hasNext()) {
@@ -884,14 +920,7 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
                     String key = summary.getKey();
 
                     // apply exclusion filter
-                    if (excludedKeyPatterns != null) {
-                        for (Pattern p : excludedKeyPatterns) {
-                            if (p.matcher(key).matches()) {
-                                log.info("excluding file {}: matches pattern: {}", key, p);
-                                continue nextObjectLoop;
-                            }
-                        }
-                    }
+                    if (isExcludedKey(key)) continue nextObjectLoop;
 
                     return new ObjectSummary(key, false, summary.getSize());
                 }
@@ -939,6 +968,8 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
 
                 if (versionSummary.isLatest() && versionSummary.isDeleteMarker()) {
                     String key = versionSummary.getKey();
+                    // apply the same exclusion filter as PrefixIterator (previously deleted keys bypassed excludedKeys)
+                    if (isExcludedKey(key)) continue;
                     return new ObjectSummary(key, false, versionSummary.getSize());
                 }
             }
@@ -946,8 +977,24 @@ public class AwsS3Storage extends AbstractS3Storage<AwsS3Config> implements Opti
 
         private S3VersionSummary getNextSummary() {
             // look for deleted objects in versioned bucket
-            if (versionListing == null || (!versionIterator.hasNext() && versionListing.isTruncated())) {
+            // NOTE: a page can be truncated and still contain no summaries (e.g. when the storage's per-request scan
+            // budget is exhausted by filtered entries); keep fetching until a summary is found or the listing ends,
+            // otherwise the remaining deleted keys would be silently skipped. A truncated empty page whose markers
+            // did not move is a storage fault that would loop forever, so it is reported instead.
+            while (versionListing == null || (!versionIterator.hasNext() && versionListing.isTruncated())) {
+                VersionListing previous = versionListing;
                 getNextVersionBatch();
+                // no continuation marker (re-requesting with null markers would start over) or unchanged markers
+                if (!versionIterator.hasNext() && versionListing.isTruncated()
+                        && (versionListing.getNextKeyMarker() == null
+                        || (previous != null
+                        && Objects.equals(previous.getNextKeyMarker(), versionListing.getNextKeyMarker())
+                        && Objects.equals(previous.getNextVersionIdMarker(), versionListing.getNextVersionIdMarker())))) {
+                    throw new RuntimeException(String.format("version listing of bucket %s (prefix %s) is not making progress: "
+                                    + "empty truncated page with %s markers (key-marker=%s, version-id-marker=%s)",
+                            config.getBucketName(), prefix, versionListing.getNextKeyMarker() == null ? "no continuation" : "unchanged",
+                            versionListing.getNextKeyMarker(), versionListing.getNextVersionIdMarker()));
+                }
             }
 
             if (versionIterator.hasNext()) {

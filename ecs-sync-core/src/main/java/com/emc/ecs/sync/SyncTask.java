@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync;
 
 import com.emc.ecs.sync.filter.SyncFilter;
@@ -59,9 +59,12 @@ public class SyncTask implements Runnable {
 
         if (!syncControl.isRunning()) {
             log.debug("aborting sync task because terminate() was called: " + sourceId);
+            syncStats.decObjectsInFlight();
             return;
         }
 
+        // set to true when this attempt has been re-queued for retry (the object is then still in flight)
+        boolean retryQueued = false;
         boolean recordExists = false;
         boolean copySkipped = false;
         boolean verifySkipped = false;
@@ -114,6 +117,7 @@ public class SyncTask implements Runnable {
                         // make sure this reference to the object is closed before the retry re-opens it
                         if (objectContext.getObject() != null) objectContext.getObject().close();
                         retryHandler.submitForRetry(source, objectContext, t);
+                        retryQueued = true;
                         return;
                     }
                 } else {
@@ -158,6 +162,7 @@ public class SyncTask implements Runnable {
                             // make sure this reference to the object is closed before the retry re-opens it
                             if (objectContext.getObject() != null) objectContext.getObject().close();
                             retryHandler.submitForRetry(source, objectContext, t);
+                            retryQueued = true;
                             return;
                         } else throw t;
                     }
@@ -213,12 +218,18 @@ public class SyncTask implements Runnable {
             }
 
         } finally {
-            dbService.unlock(sourceId);
             try {
-                // be sure to close all object resources
-                if (objectContext.getObject() != null) objectContext.getObject().close();
-            } catch (Throwable t) {
-                log.warn("could not close object resources", t);
+                dbService.unlock(sourceId);
+                try {
+                    // be sure to close all object resources
+                    if (objectContext.getObject() != null) objectContext.getObject().close();
+                } catch (Throwable t) {
+                    log.warn("could not close object resources", t);
+                }
+            } finally {
+                // the object leaves the pipeline unless it was re-queued for another attempt; this must run even if
+                // unlock() or close() throw, otherwise the job could never reach completion
+                if (!retryQueued) syncStats.decObjectsInFlight();
             }
         }
     }

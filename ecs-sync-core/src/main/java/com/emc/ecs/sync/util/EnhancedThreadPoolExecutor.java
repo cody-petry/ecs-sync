@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync.util;
 
 import org.slf4j.Logger;
@@ -146,25 +146,40 @@ public class EnhancedThreadPoolExecutor extends ThreadPoolExecutor {
         }
     }
 
+    // NOTE: the unfinished-task counter is incremented *before* the task is enqueued (and decremented again if the
+    // pool rejects it). Incrementing after super.submit() left a window in which a task could already have been taken
+    // and completed (afterExecute decrementing to -1) before the increment, so the counter transiently read as idle.
     @Override
     public Future<?> submit(Runnable task) {
-        Future<?> future = super.submit(task);
         unfinishedTasks.incrementAndGet();
-        return future;
+        try {
+            return super.submit(task);
+        } catch (RuntimeException e) {
+            unfinishedTasks.decrementAndGet();
+            throw e;
+        }
     }
 
     @Override
     public <T> Future<T> submit(Runnable task, T result) {
-        Future<T> future = super.submit(task, result);
         unfinishedTasks.incrementAndGet();
-        return future;
+        try {
+            return super.submit(task, result);
+        } catch (RuntimeException e) {
+            unfinishedTasks.decrementAndGet();
+            throw e;
+        }
     }
 
     @Override
     public <T> Future<T> submit(Callable<T> task) {
-        Future<T> future = super.submit(task);
         unfinishedTasks.incrementAndGet();
-        return future;
+        try {
+            return super.submit(task);
+        } catch (RuntimeException e) {
+            unfinishedTasks.decrementAndGet();
+            throw e;
+        }
     }
 
     /**

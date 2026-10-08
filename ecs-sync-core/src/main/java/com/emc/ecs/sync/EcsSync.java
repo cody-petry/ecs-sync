@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ * Community modifications, 2026-10-08: ecs-sync v3.5.5-community.1; see MODIFICATIONS.md. */
 package com.emc.ecs.sync;
 
 import com.emc.ecs.sync.config.ConfigUtil;
@@ -296,13 +296,34 @@ public class EcsSync implements Runnable, RetryHandler, AutoCloseable {
             }
 
             // now we must wait until all submitted tasks are complete
+            // NOTE: a failed object is handed from the sync pool to the retry-submitter pool and back; checking the
+            // per-executor task counters alone has a window in which all of them read 0 while the retry is in
+            // transit (or sleeping on the throughput throttle), which silently lost the retry. The object in-flight
+            // counter in SyncStats is incremented when an object is first submitted and decremented only when the
+            // object reaches a terminal state, so it is checked last, after the listing/query pools are idle
+            // (they are the only producers of new in-flight objects).
+            long idleSince = 0, lastInFlight = -1;
             while (syncControl.isRunning()) {
-                if (listExecutor.getUnfinishedTasks() <= 0 && queryExecutor.getUnfinishedTasks() <= 0
-                        && syncExecutor.getUnfinishedTasks() <= 0) {
+                boolean poolsIdle = listExecutor.getUnfinishedTasks() <= 0 && queryExecutor.getUnfinishedTasks() <= 0
+                        && syncExecutor.getUnfinishedTasks() <= 0 && retrySubmitter.getUnfinishedTasks() <= 0;
+                long inFlight = stats.getObjectsInFlight();
+                if (poolsIdle && inFlight <= 0) {
                     // done
                     log.info("all tasks complete");
                     break;
                 } else {
+                    // diagnostic: every pool is idle but objects are still accounted as in flight. This should only
+                    // be a brief hand-off state; if it persists, say so instead of waiting silently
+                    if (poolsIdle && inFlight == lastInFlight) {
+                        if (idleSince == 0) idleSince = System.currentTimeMillis();
+                        else if (System.currentTimeMillis() - idleSince >= 60000) {
+                            log.warn("all pools are idle but {} object(s) are still in flight (no change for 60s); waiting", inFlight);
+                            idleSince = System.currentTimeMillis();
+                        }
+                    } else {
+                        idleSince = 0;
+                        lastInFlight = inFlight;
+                    }
                     try {
                         Thread.sleep(1000);
                     } catch (InterruptedException e) {
@@ -455,6 +476,8 @@ public class EcsSync implements Runnable, RetryHandler, AutoCloseable {
         objectContext.setSourceSummary(summary);
         objectContext.setOptions(syncConfig.getOptions());
         objectContext.setStatus(ObjectStatus.Queue);
+        // a new object enters the pipeline; SyncTask decrements this when the object reaches a terminal state
+        stats.incObjectsInFlight();
         submitForSync(source, objectContext);
     }
 
@@ -474,7 +497,29 @@ public class EcsSync implements Runnable, RetryHandler, AutoCloseable {
             objectContext.setStatus(ObjectStatus.RetryQueue);
             dbService.setStatus(objectContext, SyncUtil.summarize(t), false);
 
-            retrySubmitter.submit(() -> submitForSync(source, objectContext));
+            retrySubmitter.submit(() -> {
+                try {
+                    submitForSync(source, objectContext);
+                } catch (Throwable t2) {
+                    // the retry could not be re-queued (e.g. the job was terminated while the throttle wait was
+                    // pending); without this the exception would be swallowed by the FutureTask and the object
+                    // would silently disappear from the stats and never reach a terminal DB state
+                    log.warn("O--! could not re-queue " + objectContext.getSourceSummary().getIdentifier()
+                            + " for retry; recording as failed", t2);
+                    try {
+                        objectContext.setStatus(ObjectStatus.Error);
+                        dbService.setStatus(objectContext, SyncUtil.summarize(t), false);
+                    } catch (Throwable t3) {
+                        log.warn("error setting DB status", t3);
+                    }
+                    stats.incObjectsFailed();
+                    if (syncConfig.getOptions().isRememberFailed()) {
+                        ObjectSummary summary = objectContext.getSourceSummary();
+                        stats.addFailedObject(new FailedObject(summary.getListRowNum(), summary.getIdentifier()));
+                    }
+                    stats.decObjectsInFlight();
+                }
+            });
         } catch (Throwable t2) {
             // could not retry, so bubble original error
             log.warn("retry for {} failed: {}", objectContext.getSourceSummary().getIdentifier(), SyncUtil.getCause(t2));

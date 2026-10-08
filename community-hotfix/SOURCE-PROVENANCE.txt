@@ -1,0 +1,44 @@
+ecs-sync v3.5.5-community.1 source provenance
+
+Upstream repository: https://github.com/EMCECS/ecs-sync
+Publication fork: https://github.com/cody-petry/ecs-sync
+Release name: v3.5.5-community.1
+Upstream base commit: 4fbfe8422c0082d8e92c775a03ba4060aa201563
+Upstream base tree: 8688aa75c8d40a2c21f7c6381f41c489b743198f
+Original reviewed engine commit: 466e06d2920ed1ab9814cce9f008812e19b5bc9a
+Original reviewed engine tree: 098d2e7a5bb4a5dce3e4738cebd3a6d57b30bc2e
+Publication source tree: ede2386d17f9090075b02f6001fc5ef101af1afd
+Patch-applied result tree: ede2386d17f9090075b02f6001fc5ef101af1afd
+
+The published source preserves all executable code from the original reviewed
+engine. The only difference from the reviewed tree is one community-addition/modification-notice
+comment line in each of the 21 changed/added Java files and MODIFICATIONS.md.
+The original Java source line counts remain unchanged. The compiled JAR has
+not been rebuilt or modified for the publication comments/documentation.
+
+The source archive contains all 581 tracked publication files, retaining the
+Gradle wrapper, complete modules, tests, executable modes, LICENSE, and NOTICE.
+Archive files contain Git blob bytes without working-tree line-ending
+conversion. No Git history, private review reports, operational logs, or
+production configuration is included.
+
+The combined patch includes the original islatest-v2 fix, fixes 0001 through
+0005, the completed pagination correction, regression tests, the test-only
+AwsS3LargeFileUploaderTest teardown guard, and publication notices. Apply it
+to the pinned upstream base, not to an already-patched source tree.
+
+Verification performed while preparing this publication source:
+- Each Java file is identical to the original reviewed source after replacing
+  its single publication-notice comment line with the original closing line.
+- No other reviewed source files were changed; only MODIFICATIONS.md was added.
+- git apply --cached --check succeeded against a pristine upstream base index.
+- Applying the patch produced the exact publication tree hash above.
+- Every archive file matched its Git blob and executable mode.
+
+The original reviewed commit describes the internal engine build provenance;
+it need not be a commit in the publication fork. The publication source tree
+hash identifies the source snapshot independently of its eventual Git commit.
+
+The fork branch additionally carries community-hotfix documentation and an
+introductory README notice. Those publication documents are outside this
+source-only patch/archive tree.
