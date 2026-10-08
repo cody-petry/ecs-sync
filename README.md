@@ -3,7 +3,7 @@
 
 This branch contains **ecs-sync 3.5.5 Community Hotfix 1**, an unofficial test build with corrections for S3 version ordering, verification, retries, pagination, and version deletion.
 
-Start with the [community documentation](community-hotfix/README.md) for the fix list, validation record, build instructions, and installation/rollback procedure. Release label: `v3.5.5-community.1`. Compiled release assets are pending publication on the [Releases page](https://github.com/cody-petry/ecs-sync/releases).
+Start with the [community documentation](community-hotfix/README.md) for the fix list, validation record, build instructions, and installation/rollback procedure. Release label: `v3.5.5-community.1`. Download the compiled JAR, complete package, and checksums from [Community Hotfix 1](https://github.com/cody-petry/ecs-sync/releases/tag/v3.5.5-community.1).
 
 Original project documentation follows.
 
