@@ -4,7 +4,7 @@ This branch contains community corrections to upstream ecs-sync v3.5.5. It is an
 
 ## Use this build
 
-The corrected source and tests are available on this branch. The compiled release assets have not yet been published. Check the [fork's Releases page](https://github.com/cody-petry/ecs-sync/releases) for binary availability.
+The corrected source and tests are available on this branch. Download the compiled JAR, complete package, and checksums from [v3.5.5-community.1](https://github.com/cody-petry/ecs-sync/releases/tag/v3.5.5-community.1). The release tag preserves the source and documentation snapshot for this release.
 
 - Existing ecs-sync 3.5.5 installations: follow [INSTALL.md](INSTALL.md) for the engine JAR replacement, readiness checks, controlled test, and rollback.
 - New installations: install the [official v3.5.5 distribution](https://github.com/EMCECS/ecs-sync/releases/tag/v3.5.5), then substitute the community engine JAR using the documented procedure. This release does not supply a new system installer or web UI.
